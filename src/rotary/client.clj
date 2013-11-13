@@ -3,8 +3,9 @@
   (:use [clojure.algo.generic.functor :only (fmap)]
         [clojure.core.incubator :only (-?>>)])
   (:require [clojure.string :as str])
-  (:import com.amazonaws.auth.BasicAWSCredentials
+  (:import com.amazonaws.ClientConfiguration
            com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
+           com.amazonaws.services.dynamodbv2.util.Tables
            [com.amazonaws.services.dynamodbv2.model
             AttributeValue
             AttributeDefinition
@@ -36,13 +37,14 @@
             WriteRequest]))
 
 (defn- db-client*
-  "Get a AmazonDynamoDBClient instance for the supplied credentials."
-  [cred]
-  (let [aws-creds (BasicAWSCredentials. (:access-key cred) (:secret-key cred))
-        client (AmazonDynamoDBClient. aws-creds)]
-    (when-let [endpoint (:endpoint cred)]
-      (.setEndpoint client endpoint))
-    client))
+  "Get a AmazonDynamoDBClient instance for the supplied configuration."
+  [{:keys [endpoint proxy-host proxy-port]}]
+  (let [client-config (ClientConfiguration.)]
+    (when proxy-host (.setProxyHost client-config proxy-host))
+    (when proxy-port (.setProxyPort client-config proxy-port))
+    (let [client (AmazonDynamoDBClient. client-config)]
+      (when endpoint (.setEndpoint client endpoint))
+      client)))
 
 (def db-client
   (memoize db-client*))
@@ -104,7 +106,8 @@
 (defn- local-indexes
   "Creates a vector of LocalSecondaryIndexes"
   [hash-key indexes]
-  (map (partial local-index hash-key) indexes))
+  (when indexes
+    (map (partial local-index hash-key) indexes)))
 
 (defn- attribute-definition
   "Creates an AttributeDefinition Object"
@@ -132,19 +135,22 @@
     :type - the type of the key (:s, :n, :ss, :ns)
 
   Where :s is a string type, :n is a number type, and :ss and :ns are sets of
-  strings and number respectively. 
+  strings and number respectively.
 
   The throughput is a map with two keys:
     :read - the provisioned number of reads per second
     :write - the provisioned number of writes per second
-  
+
   The indexes vector is a vector of maps with two keys and two further optional ones
     :name - the name of the Local Secondary Index (required)
     :range-key - a map that defines the range key name and type (required)
     :projection - keyword that defines the projection may be:
     :all, :keys_only, :include (optional - default is :keys-only)
-    :included-attrs - a vector of attribute names when :projection is :include (optional)"
-  [cred {:keys [name hash-key range-key throughput indexes]}]
+    :included-attrs - a vector of attribute names when :projection is :include (optional)
+
+  If :wait is specified, the function will not return until table creation has
+  been completed."
+  [cred {:keys [name hash-key range-key throughput indexes wait]}]
   (.createTable
     (db-client cred)
     (let [defined-attrs (->> (conj [] hash-key range-key)
@@ -157,7 +163,9 @@
         (.setProvisionedThroughput
           (provisioned-throughput throughput))
         (.setLocalSecondaryIndexes
-          (local-indexes hash-key indexes))))))
+         (local-indexes hash-key indexes)))))
+   (when wait
+    (Tables/waitForTableToBecomeActive (db-client cred) name)))
 
 (defn update-table
   "Update a table in DynamoDB with the given name. Only the throughput may be
@@ -455,7 +463,7 @@
   (let [qr (QueryRequest.)
         hash-clause (set-hash-condition hash-key)
         [range-key operator range-value range-end] range-clause
-        query-conditions (if (nil? operator) 
+        query-conditions (if (nil? operator)
                            hash-clause
                            (merge hash-clause (set-range-condition range-key
                                                                    (normalize-operator operator)

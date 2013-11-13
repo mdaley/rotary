@@ -2,26 +2,26 @@
   (:use [rotary.client])
   (:use [clojure.test]))
 
-(def cred {:access-key (get (System/getenv) "AMAZON_SECRET_ID")
-           :secret-key (get (System/getenv) "AMAZON_SECRET_ACCESS_KEY")})
+(def client-config {:proxy-host (get (System/getenv) "AMAZON_PROXY_HOST")
+                    :proxy-port (read-string (get (System/getenv) "AMAZON_PROXY_PORT"))})
 
 (def table "rotary-dev-test")
 (def id "test-id")
 (def attr "test-attr")
 
-(ensure-table cred {:name table
+(ensure-table client-config {:name table
                     :hash-key {:name id :type :s}
                     :throughput {:write 1 :read 1}})
 
 (defn setup-table
   []
-  (batch-write-item cred
+  (batch-write-item client-config
     [:delete table {id "1"}]
     [:delete table {id "2"}]
     [:delete table {id "3"}]
     [:delete table {id "4"}])
-  
-  (batch-write-item cred
+
+  (batch-write-item client-config
     [:put table {id "1" attr "foo"}]
     [:put table {id "2" attr "bar"}]
     [:put table {id "3" attr "baz"}]
@@ -29,27 +29,27 @@
 
 (deftest test-batch-simple
   (setup-table)
-  (let [result (batch-get-item cred {
+  (let [result (batch-get-item client-config {
                  table {
                    :key-name "test-id"
                    :keys ["1" "2" "3" "4"]
                    :consistent true}})
-        consis (batch-get-item cred {
+        consis (batch-get-item client-config {
                  table {
                    :key-name "test-id"
                    :consistent true
                    :keys ["1" "2" "3" "4"]}})
-        attrs (batch-get-item cred {
+        attrs (batch-get-item client-config {
                  table {
                    :key-name "test-id"
                    :consistent true
                    :attrs [attr]
                    :keys ["1" "2" "3" "4"]}})
         items (get-in result [:responses table])
-        item-1 (get-item cred table {id "1"})
-        item-2 (get-item cred table {id "2"})
-        item-3 (get-item cred table {id "3"})
-        item-4 (get-item cred table {id "4"})]
+        item-1 (get-item client-config table {id "1"})
+        item-2 (get-item client-config table {id "2"})
+        item-3 (get-item client-config table {id "3"})
+        item-4 (get-item client-config table {id "4"})]
 
     (is (= "foo" (item-1 attr)) "batch-write-item :put failed")
     (is (= "bar" (item-2 attr)) "batch-write-item :put failed")
@@ -61,13 +61,13 @@
     (is (= true (some #(= (% attr) "baz") (get-in attrs [:responses table]))))
     (is (= true (some #(= (% attr) "foobar") items)))
 
-    (batch-write-item cred
+    (batch-write-item client-config
       [:delete table {id "1"}]
       [:delete table {id "2"}]
       [:delete table {id "3"}]
       [:delete table {id "4"}])
-    
-    (is (= nil (get-item cred table {id "1"})) "batch-write-item :delete failed")
-    (is (= nil (get-item cred table {id "2"})) "batch-write-item :delete failed")
-    (is (= nil (get-item cred table {id "3"})) "batch-write-item :delete failed")
-    (is (= nil (get-item cred table {id "4"})) "batch-write-item :delete failed")))
+
+    (is (= nil (get-item client-config table {id "1"})) "batch-write-item :delete failed")
+    (is (= nil (get-item client-config table {id "2"})) "batch-write-item :delete failed")
+    (is (= nil (get-item client-config table {id "3"})) "batch-write-item :delete failed")
+    (is (= nil (get-item client-config table {id "4"})) "batch-write-item :delete failed")))
